@@ -222,13 +222,14 @@ ggplot2::ggsave(here::here("plots/peptide_LFQs_bars_legend.pdf"),
 
 # Differential abundance --------------------------------------------------
 
-# Limma workflow:
-
+# Log2-transform and quantile-normalize peptide intensities across samples,
+# then run a limma linear model to test KO_g2 vs WT
 data <- tmp |>
   log2() |>
   limma::normalizeBetweenArrays() |>
   as.data.frame()
 
+# No-intercept design matrix so each group gets its own coefficient
 design_matrix <- model.matrix(
   ~ 0 + metadata$grouping,
   data
@@ -240,16 +241,19 @@ colnames(design_matrix) <- c(
   "WT"
 )
 
+# Fit per-peptide linear models
 fit <- limma::lmFit(
   data,
   design_matrix
 )
 
+# Define the KO_g2 vs WT contrast
 contrast_matrix <- limma::makeContrasts(
   "KO_g2-WT" = KO_g2-WT,
   levels = design_matrix
 )
 
+# Re-fit on the contrast and apply empirical Bayes shrinkage
 tmp <- limma::contrasts.fit(
   fit,
   contrast_matrix
@@ -257,12 +261,13 @@ tmp <- limma::contrasts.fit(
 
 tmp <- limma::eBayes(tmp)
 
+# Extract all results sorted by p-value
 DE_results <- limma::topTable(tmp,
                               sort.by = "P",
                               n = Inf
 )
 
-
+# Interactive volcano for quick exploration (not saved)
 plotly::ggplotly(
   DE_results |>
     dplyr::mutate("significant" = dplyr::case_when(
@@ -288,6 +293,8 @@ plotly::ggplotly(
     ggplot2::theme_minimal()
 )
 
+# Annotate significance, recover gene names as a column,
+# and flag specific genes of interest for labelling
 DE_results <- DE_results |>
   dplyr::mutate("significant" = dplyr::case_when(
     adj.P.Val <= 0.05 & logFC > 0 ~ "Upregulated",
@@ -303,6 +310,8 @@ DE_results <- DE_results |>
     TRUE ~ ""
   ))
 
+# Publication-style volcano plot; only significant hits are coloured,
+# and selected genes are labelled with repelled text boxes
 DE_results |>
   ggplot2::ggplot(ggplot2::aes(
     x = logFC,
