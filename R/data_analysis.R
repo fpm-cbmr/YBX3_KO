@@ -368,3 +368,142 @@ ggplot2::ggsave(here::here("plots/volcano_DE.pdf"),
                 width = 60)
 
 
+# YBX1 peptide-level analysis ---------------------------------------------
+
+# Load peptide quantification data, keep only Ybx1 peptides,
+# drop quality/filter columns, and set precursor ID as row names
+tmp_ybx1 <- vroom::vroom(here::here("data-raw/YBX3_KO_peptide_quant.tsv")) |>
+  dplyr::select(
+    !c(PG.Qvalue, PEP.IsProteotypic, PEP.IsGeneSpecific)
+  ) |>
+  dplyr::filter(PG.Genes == "Ybx1") |>
+  dplyr::select(!PG.Genes) |>
+  tibble::column_to_rownames("EG.PrecursorId")
+
+# Rename columns to meaningful sample identifiers
+colnames(tmp_ybx1) <- c("WT1",
+                        "WT2",
+                        "WT3",
+                        "KOg2_1",
+                        "KOg2_2",
+                        "KOg2_3",
+                        "KOg5_1",
+                        "KOg5_2")
+
+# Reshape to long format, replace "Filtered" strings with NA,
+# convert LFQ values to numeric, log2-transform, and join metadata
+tmp2_ybx1 <- tmp_ybx1 |>
+  as.data.frame() |>
+  tibble::rownames_to_column("peptide_seq") |>
+  tidyr::pivot_longer(cols = !peptide_seq, names_to = "sample_id", values_to = "LFQs") |>
+  dplyr::mutate(
+    LFQs = case_when(
+      LFQs == "Filtered" ~ NA,
+      TRUE ~ LFQs
+    )
+  ) |>
+  mutate(
+    LFQs = as.numeric(LFQs),
+    LFQs = log2(LFQs)
+  ) |>
+  inner_join(metadata)
+
+# Faceted boxplot showing log2 LFQ intensities per Ybx1 peptide across groups
+tmp2_ybx1 |>
+  ggplot2::ggplot(
+    ggplot2::aes(
+      x = grouping,
+      y = LFQs,
+      fill = grouping
+    )
+  ) +
+  ggplot2::geom_boxplot() +
+  ggplot2::geom_point() +
+  ggplot2::theme_classic() +
+  ggplot2::ylab("LFQ intensity (log2)") +
+  ggplot2::scale_fill_viridis_d(option = "turbo") +
+  ggplot2::theme(
+    plot.title = ggplot2::element_text(hjust = 0.5),
+    legend.position = "none",
+    axis.title.x = element_blank(),
+    text = element_text(size = 6)
+  ) +
+  facet_wrap(~peptide_seq, ncol = 6)
+
+ggplot2::ggsave(here::here("plots/Ybx1_peptide_LFQs.pdf"),
+                units = "mm",
+                height = 90,
+                width = 180)
+
+
+# Ybx1 log2FC color gradient ----------------------------------------------
+
+# Compute per-group mean LFQ for each Ybx1 peptide, then calculate
+# log2 fold-change as KO_g2 minus WT (negative = loss of abundance)
+LFQ_seq_ybx1 <- tmp2_ybx1 |>
+  group_by(grouping, peptide_seq) |>
+  summarise(
+    mean_LFQ = mean(LFQs, na.rm = TRUE)
+  ) |>
+  pivot_wider(names_from = grouping,
+              values_from = mean_LFQ) |>
+  mutate(
+    log2FC = KO_g2 - WT
+  )
+
+# Bar plot of per-peptide log2FC ordered by magnitude, filled by the same
+# darkred-grey-darkblue gradient used for Ybx3
+p_bars_ybx1 <- LFQ_seq_ybx1 |>
+  ggplot2::ggplot(
+    ggplot2::aes(
+      x = reorder(peptide_seq, log2FC),
+      y = log2FC,
+      fill = log2FC
+    )
+  ) +
+  ggplot2::geom_col() +
+  ggplot2::scale_fill_gradient2(
+    low    = "darkred",
+    mid    = "grey",
+    high   = "darkblue",
+    limits = c(-4, 0.1),
+    oob    = scales::squish,   # clamp out-of-range values instead of turning them grey
+    name   = "log2FC"
+  ) +
+  ggplot2::theme_classic() +
+  ggplot2::ylab("log2FC (KO_g2 - WT)") +
+  ggplot2::xlab("Peptide") +
+  ggplot2::theme(
+    text              = ggplot2::element_text(size = 5),
+    axis.text.x       = ggplot2::element_text(angle = 45, hjust = 1, size = 4),
+    axis.text.y       = ggplot2::element_text(size = 4),
+    axis.title        = ggplot2::element_text(size = 5),
+    legend.title      = ggplot2::element_text(size = 5),
+    legend.text       = ggplot2::element_text(size = 4),
+    legend.key.height = ggplot2::unit(3, "mm"),
+    legend.key.width  = ggplot2::unit(2, "mm"),
+    plot.margin       = ggplot2::margin(1, 1, 1, 1, "mm")
+  )
+
+ggplot2::ggsave(here::here("plots/Ybx1_peptide_LFQs_bars.pdf"),
+                plot   = p_bars_ybx1,
+                units  = "mm",
+                height = 60,
+                width  = 120)
+
+# Extract the Ybx1 legend as a standalone grob and save at a larger size
+p_bars_ybx1_legend <- cowplot::get_legend(
+  p_bars_ybx1 +
+    ggplot2::theme(
+      legend.title      = ggplot2::element_text(size = 8),
+      legend.text       = ggplot2::element_text(size = 6),
+      legend.key.height = ggplot2::unit(6, "mm"),
+      legend.key.width  = ggplot2::unit(3, "mm")
+    )
+)
+
+ggplot2::ggsave(here::here("plots/Ybx1_peptide_LFQs_bars_legend.pdf"),
+                plot   = p_bars_ybx1_legend,
+                units  = "mm",
+                height = 60,
+                width  = 30)
